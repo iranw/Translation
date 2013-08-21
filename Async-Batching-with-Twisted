@@ -1,0 +1,335 @@
+
+原文：http://technicae.cogitat.io/2008/06/async-batching-with-twisted-walkthrough.html
+
+Async Batching with Twisted: A Walkthrough
+
+While drafting a Divmod announcement last week, I had a quick chat with a dot-bomb-era colleague of mine. Turns out, his team wants to do some cool asynchronous batching jobs, so he's taking a look at Twisted. Because he's a good guy and I like Twisted, I drew up some examples for him that should get him jump-started. Each example covered something in more depth that it's predecessor, so is probably generally useful. Thus this blog post :-)
+
+I didn't get a chance to show him a DeferredSemaphore example nor one for the Cooperator, so I will take this opportunity to do so. For each of the examples below, you can save the code as a text file and call it with "python filname.py", and the output will be displayed.
+
+These examples don't attempt to give any sort of introduction to the complexities of asynchronous programming nor the problem domain of highly concurrent applications. Deferreds are covered in more depth here and here. However, hopefully this mini-howto will inspire curiosity about those :-)
+
+
+Example 1: Just a DefferedList
+
+from twisted.internet import defer, reactor
+from twisted.web.client import getPage
+ 
+def listCallback(results):
+  print results
+ 
+def finish(ign):
+  reactor.stop()
+ 
+def test():
+  d1 = getPage('http://www.google.com')
+  d2 = getPage('http://yahoo.com')
+  dl = defer.DeferredList([d1, d2])
+  dl.addCallback(listCallback)
+  dl.addCallback(finish)
+ 
+test()
+reactor.run()
+
+
+This is one of the simplest examples you'll ever see for a deferred list in action. Get two deferreds (the getPage function returns a deferred) and use them to created a deferred list. Add callbacks to the list, garnish with a lemon.
+
+
+Example 2: Simple Result Manipulation
+
+
+from twisted.internet import defer, reactor
+from twisted.web.client import getPage
+ 
+def listCallback(results):
+  for isSuccess, content in results:
+    print "Successful? %s" % isSuccess
+    print "Content Length: %s" % len(content)
+ 
+def finish(ign):
+  reactor.stop()
+ 
+def test():
+  d1 = getPage('http://www.google.com')
+  d2 = getPage('http://yahoo.com')
+  dl = defer.DeferredList([d1, d2])
+  dl.addCallback(listCallback)
+  dl.addCallback(finish)
+ 
+test()
+reactor.run()
+
+
+We make things a little more interesting in this example by doing some processing on the results. For this to make sense, just remember that a callback gets passed the result when the deferred action completes. If we look up the API documentation for DeferredList, we see that it returns a list of (success, result) tuples, where success is a Boolean and result is the result of a deferred that was put in the list (remember, we've got two layers of deferreds here!).
+
+
+Example 3: Page Callbacks Too
+
+from twisted.internet import defer, reactor
+from twisted.web.client import getPage
+ 
+def pageCallback(result):
+  return len(result)
+ 
+def listCallback(result):
+  print result
+ 
+def finish(ign):
+  reactor.stop()
+ 
+def test():
+  d1 = getPage('http://www.google.com')
+  d1.addCallback(pageCallback)
+  d2 = getPage('http://yahoo.com')
+  d2.addCallback(pageCallback)
+  dl = defer.DeferredList([d1, d2])
+  dl.addCallback(listCallback)
+  dl.addCallback(finish)
+ 
+test()
+reactor.run()
+
+
+
+Here, we mix things up a little bit. Instead of doing processing on all the results at once (in the deferred list callback), we're processing them when the page callbacks fire. Our processing here is just a simple example of getting the length of the getPage deferred result: the HTML content of the page at the given URL.
+
+
+Example 4: Results with More Structure
+
+from twisted.internet import defer, reactor
+from twisted.web.client import getPage
+ 
+def pageCallback(result):
+  data = {
+    'length': len(result),
+    'content': result[:10],
+    }
+  return data
+ 
+def listCallback(result):
+  for isSuccess, data in result:
+    if isSuccess:
+      print "Call to server succeeded with data %s" % str(data)
+ 
+def finish(ign):
+  reactor.stop()
+ 
+def test():
+  d1 = getPage('http://www.google.com')
+  d1.addCallback(pageCallback)
+  d2 = getPage('http://yahoo.com')
+  d2.addCallback(pageCallback)
+  dl = defer.DeferredList([d1, d2])
+  dl.addCallback(listCallback)
+  dl.addCallback(finish)
+ 
+test()
+reactor.run()
+
+
+
+A follow-up to the last example, here we put the data in which we are interested into a dictionary. We don't end up pulling any of the data out of the dictionary; we just stringify it and print it to stdout.
+
+
+Example 5: Passing Values to Callbacks
+
+from twisted.internet import defer, reactor
+from twisted.web.client import getPage
+ 
+def pageCallback(result, url):
+  data = {
+    'length': len(result),
+    'content': result[:10],
+    'url': url,
+    }
+  return data
+ 
+def getPageData(url):
+  d = getPage(url)
+  d.addCallback(pageCallback, url)
+  return d
+ 
+def listCallback(result):
+  for isSuccess, data in result:
+    if isSuccess:
+      print "Call to %s succeeded with data %s" % (data['url'], str(data))
+ 
+def finish(ign):
+  reactor.stop()
+ 
+def test():
+  d1 = getPageData('http://www.google.com')
+  d2 = getPageData('http://yahoo.com')
+  dl = defer.DeferredList([d1, d2])
+  dl.addCallback(listCallback)
+  dl.addCallback(finish)
+ 
+test()
+reactor.run()
+
+
+
+After all this playing, we start asking ourselves more serious questions, like: "I want to decide which values show up in my callbacks" or "Some information that is available here, isn't available there. How do I get it there?" This is how :-) Just pass the parameters you want to your callback. They'll be tacked on after the result (as you can see from the function signatures).
+
+In this example, we needed to create our own deferred-returning function, one that wraps the getPage function so that we can also pass the URL on to the callback.
+
+
+Example 6: Adding Some Error Checking
+
+
+from twisted.internet import defer, reactor
+from twisted.web.client import getPage
+ 
+urls = [
+  'http://yahoo.com',
+  'http://www.google.com',
+  'http://www.google.com/MicrosoftRules.html',
+  'http://bogusdomain.com',
+  ]
+ 
+def pageCallback(result, url):
+  data = {
+    'length': len(result),
+    'content': result[:10],
+    'url': url,
+    }
+  return data
+ 
+def pageErrback(error, url):
+  return {
+    'msg': error.getErrorMessage(),
+    'err': error,
+    'url': url,
+    }
+ 
+def getPageData(url):
+  d = getPage(url, timeout=5)
+  d.addCallback(pageCallback, url)
+  d.addErrback(pageErrback, url)
+  return d
+ 
+def listCallback(result):
+  for ignore, data in result:
+    if data.has_key('err'):
+      print "Call to %s failed with data %s" % (data['url'], str(data))
+    else:
+      print "Call to %s succeeded with data %s" % (data['url'], str(data))
+ 
+def finish(ign):
+  reactor.stop()
+ 
+def test():
+  deferreds = []
+  for url in urls:
+    d = getPageData(url)
+    deferreds.append(d)
+  dl = defer.DeferredList(deferreds, consumeErrors=1)
+  dl.addCallback(listCallback)
+  dl.addCallback(finish)
+ 
+test()
+reactor.run()
+
+
+As we get closer to building real applications, we start getting concerned about things like catching/anticipating errors. We haven't added any errbacks to the deferred list, but we have added one to our page callback. We've added more URLs and put them in a list to ease the pains of duplicate code. As you can see, two of the URLs should return errors: one a 404, and the other should be a domain not resolving (we'll see this as a timeout).
+
+
+Example 7: Batching with DeferredSemaphore
+
+
+from twisted.internet import defer, reactor
+from twisted.web.client import getPage
+ 
+maxRun = 1
+ 
+urls = [
+  'http://twistedmatrix.com',
+  'http://yahoo.com',
+  'http://www.google.com',
+  ]
+ 
+def listCallback(results):
+  for isSuccess, result in results:
+    print len(result)
+ 
+def finish(ign):
+  reactor.stop()
+ 
+def test():
+  deferreds = []
+  sem = defer.DeferredSemaphore(maxRun)
+  for url in urls:
+    d = sem.run(getPage, url)
+    deferreds.append(d)
+  dl = defer.DeferredList(deferreds)
+  dl.addCallback(listCallback)
+  dl.addCallback(finish)
+ 
+test()
+reactor.run()
+
+
+
+These last two examples are for more advanced use cases. As soon as the reactor starts, deferreds that are ready, start "firing" -- their "jobs" start running. What if we've got 500 deferreds in a list? Well, they all start processing. As you can imagine, this is an easy way to run an accidental DoS against a friendly service. Not cool.
+
+For situations like this, what we want is a way to run only so many deferreds at a time. This is a great use for the deferred semaphore. When I repeated runs of the example above, the content lengths of the four pages returned after about 2.5 seconds. With the example rewritten to use just the deferred list (no deferred semaphore), the content lengths were returned after about 1.2 seconds. The extra time is due to the fact that I (for the sake of the example) forced only one deferred to run at a time, obviously not what you're going to want to do for a highly concurrent task ;-)
+
+Note that without changing the code and only setting maxRun to 4, the timings for getting the the content lengths is about the same, averaging for me 1.3 seconds (there's a little more overhead involved when using the deferred semaphore).
+
+One last subtle note (in anticipation of the next example): the for loop creates all the deferreds at once; the deferred semaphore simply limits how many get run at a time.
+
+
+Example 8: Throttling with Cooperator
+
+
+from twisted.internet import defer, reactor, task
+from twisted.web.client import getPage
+ 
+maxRun = 2
+ 
+urls = [
+  'http://twistedmatrix.com',
+  'http://yahoo.com',
+  'http://www.google.com',
+  ]
+ 
+def pageCallback(result):
+  print len(result)
+  return result
+ 
+def doWork():
+  for url in urls:
+    d = getPage(url)
+    d.addCallback(pageCallback)
+    yield d
+ 
+def finish(ign):
+  reactor.stop()
+ 
+def test():
+  deferreds = []
+  coop = task.Cooperator()
+  work = doWork()
+  for i in xrange(maxRun):
+    d = coop.coiterate(work)
+    deferreds.append(d)
+  dl = defer.DeferredList(deferreds)
+  dl.addCallback(finish)
+ 
+test()
+reactor.run()
+
+
+This is the last example for this post, and it's is probably the most arcane :-) This example is taken from JP's blog post from a couple years ago. Our observation in the previous example about the way that the deferreds were created in the for loop and how they were run is now our counter example. What if we want to limit when the deferreds are created? What if we're using deferred semaphore to create 1000 deferreds (but only running them 50 at a time), but running out of file descriptors? Cooperator to the rescue.
+
+This one is going to require a little more explanation :-) Let's see if we can move through the justifications for the strangeness clearly: 
+We need the deferreds to be yielded so that the callback is not created until it's actually needed (as opposed to the situation in the deferred semaphore example where all the deferreds were created at once).
+We need to call doWork before the for loop so that the generator is created outside the loop. thus making our way through the URLs (calling it inside the loop would give us all four URLs every iteration).
+We removed the result-processing callback on the deferred list because coop.coiterate swallows our results; if we need to process, we have to do it with pageCallback.
+We still use a deferred list as the means to determine when all the batches have finished.
+This example could have been written much more concisely: the doWork function could have been left in test as a generator expression and test's for loop could have been a list comprehension. However, the point is to show very clearly what is going on.
+
+I hope these examples were informative and provide some practical insight on working with deferreds in your Twisted projects :-)
+
+Posted by Duncan McGreggor at 12:08 AM  
+Labels: asynchronous, concurrency, deferreds, development, howtos, programming methodologies, twisted
