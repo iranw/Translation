@@ -1,9 +1,12 @@
-
 原文：http://technicae.cogitat.io/2008/06/async-batching-with-twisted-walkthrough.html
 
 Async Batching with Twisted: A Walkthrough
 
+Twisted的异步批处理 : 一个练习程序		  	
+
+
 While drafting a Divmod announcement last week, I had a quick chat with a dot-bomb-era colleague of mine. Turns out, his team wants to do some cool asynchronous batching jobs, so he's taking a look at Twisted. Because he's a good guy and I like Twisted, I drew up some examples for him that should get him jump-started. Each example covered something in more depth that it's predecessor, so is probably generally useful. Thus this blog post :-)
+
 
 I didn't get a chance to show him a DeferredSemaphore example nor one for the Cooperator, so I will take this opportunity to do so. For each of the examples below, you can save the code as a text file and call it with "python filname.py", and the output will be displayed.
 
